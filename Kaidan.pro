@@ -13,8 +13,10 @@ TEMPLATE = app
 
 
 SOURCES += main.cpp\
-        kaidan.cpp
+        kaidan.cpp \
+    jasonparser.cpp
 
-HEADERS  += kaidan.h
+HEADERS  += kaidan.h \
+    jasonparser.h
 
 FORMS    += kaidan.ui
