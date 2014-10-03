@@ -15,8 +15,11 @@ public:
     explicit Kaidan(QWidget *parent = 0);
     ~Kaidan();
 
+private slots:
+
 private:
     Ui::Kaidan *ui;
+
 };
 
 #endif // KAIDAN_H

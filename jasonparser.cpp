@@ -10,11 +10,8 @@ JasonParser::~JasonParser(){
 
 void JasonParser::testEnvironment(){
     qDebug() << "substitutes:" << substitutes;
-//    qDebug() << subsystems;
-//    qDebug() << systemTable;
     qDebug() << "activeOptions:" << activeOptions;
     qDebug() << "procEnv:" << procEnv.toStringList();
-    qDebug() << "launchables:" << runtimeValues.value("launchables");
     foreach(QString var,procEnv.toStringList()){
         if(var.contains("%"))
             qDebug() << "unresolved variable?" << var.split("=")[1];
@@ -40,18 +37,6 @@ void JasonParser::startParse(){
         return;
     }
 
-    if(desktopFile.isEmpty()){
-        if(runProcesses(actionId)!=0){
-            updateProgressText(tr("Error occured while trying to launch"));
-            broadcastMessage(2,tr("Shit.\n"));
-            emit toggleCloseButton(true);
-            emit failedProcessing();
-            return;
-        }
-    }else{
-        updateProgressText(tr("We are generating a .desktop file now. Please wait for possible on-screen prompts."));
-        generateDesktopFile(desktopFile,jasonPath,startDocument);
-    }
     QEventLoop waitForEnd;
     connect(this,SIGNAL(finishedProcessing()),&waitForEnd,SLOT(quit()));
     waitForEnd.exec();
@@ -165,9 +150,6 @@ int JasonParser::jsonParse(QJsonDocument jDoc){ //level is used to identify the 
 
     updateProgressText(tr("Gathering active options"));
     parseStage2(mainTree);
-    foreach(QString import,importedFiles){
-        parseStage2(jsonOpenFile(import).object());
-    }
 
     updateProgressText(tr("Resolving variables"));
     resolveVariables();
@@ -367,7 +349,7 @@ void JasonParser::environmentActivate(QHash<QString,QVariant> environmentHash){
     return;
 }
 
-int JasonParser::runProcesses(QString launchId){
+int JasonParser::runProcesses(){
     /*
      *
      * launchId:
@@ -405,7 +387,7 @@ int JasonParser::runProcesses(QString launchId){
 //        }
 }
 
-void JasonParser::executeProcess(QString argument, QString program, QString workDir, QString title, QString runprefix, QString runsuffix){
+void JasonParser::executeProcess(QString argument, QString program, QString workDir, QString title){
     /*
      * program - Prefixed to argument, specifically it could be 'wine' or another frontend program such as
      * 'mupen64plus'. It is not supposed to run shells.
@@ -448,11 +430,6 @@ void JasonParser::executeProcess(QString argument, QString program, QString work
 
     QString execString;
     execString = program+" "+argument;
-    //We apply the prefixes/suffixes
-    if(!runprefix.isEmpty())
-        execString.prepend(runprefix+" ");
-    if(!runsuffix.isEmpty())
-        execString.append(" "+runsuffix);
 
     arguments.append(execString);
     executer->setArguments(arguments);
@@ -466,7 +443,6 @@ void JasonParser::executeProcess(QString argument, QString program, QString work
     executer->start();
     executer->waitForFinished(-1);
     if((executer->exitCode()!=0)||(executer->exitStatus()!=0)){
-        qDebug() << "showing output";
         QString stdOut,stdErr,argumentString;
         stdOut = executer->readAllStandardOutput();
         stdErr = executer->readAllStandardError();
@@ -502,8 +478,4 @@ void JasonParser::processOutputError(QProcess::ProcessError processError){
 
 void JasonParser::processStarted(){
 
-}
-
-void JasonParser::detachedMainProcessClosed(){
-    emit mainProcessEnd();
 }

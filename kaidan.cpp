@@ -1,5 +1,6 @@
 #include "kaidan.h"
 #include "ui_kaidan.h"
+#include "jasonparser.h"
 
 Kaidan::Kaidan(QWidget *parent) :
     QDialog(parent),
@@ -12,3 +13,4 @@ Kaidan::~Kaidan()
 {
     delete ui;
 }
+

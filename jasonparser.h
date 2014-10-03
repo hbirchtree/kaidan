@@ -26,20 +26,17 @@ public:
 
     //General
     void testEnvironment();
-    void setStartOpts(QString startDocument, QString actionId, QString desktopFile, QString jasonPath);
+    void setStartOpts(QString startDocument, QString jasonPath);
 
     int exitResult;
 
 public slots:
     void processStarted();
     void startParse();
-    void detachedMainProcessClosed();
 
 private slots:
     void processOutputError(QProcess::ProcessError processError);
     void processFinished(int exitCode,QProcess::ExitStatus exitStatus);
-    void doPrerun();
-    void doPostrun();
 
 signals:
 
@@ -52,8 +49,6 @@ signals:
     void updateProgressTitle(QString);
     void broadcastMessage(int,QString);
     void toggleProgressVisible(bool);
-    void displayDetachedMessage(QString);
-    void changeProgressWIcon(QString);
     void changeProgressBarRange(int,int); //0,0 will make it indefinite, something else will make it normal.
     void changeProgressBarValue(int);
 
