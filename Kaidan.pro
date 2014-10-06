@@ -4,7 +4,7 @@
 #
 #-------------------------------------------------
 
-QT       += core gui
+QT       += core gui network
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -14,9 +14,11 @@ TEMPLATE = app
 
 SOURCES += main.cpp\
         kaidan.cpp \
-    jasonparser.cpp
+    jasonparser.cpp \
+    downloader.cpp
 
 HEADERS  += kaidan.h \
-    jasonparser.h
+    jasonparser.h \
+    downloader.h
 
 FORMS    += kaidan.ui

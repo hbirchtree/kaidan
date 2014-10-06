@@ -20,14 +20,13 @@ int main(int argc, char *argv[])
     //Actual processing
     cParse.process(a);
 
+    Kaidan w;
     //Required arguments
     QStringList posArgs = cParse.positionalArguments();
     QString filename;
     if (posArgs.length()>=1)
         filename = posArgs[0];
-
-    Kaidan w;
-    w.show();
+    w.initializeParse(filename);
 
     return a.exec();
 }

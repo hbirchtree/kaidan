@@ -1,4 +1,5 @@
 #include "jasonparser.h"
+#include "downloader.h"
 
 JasonParser::JasonParser(){
 
@@ -26,13 +27,12 @@ void JasonParser::testEnvironment(){
 
 void JasonParser::startParse(){
     updateProgressText(tr("Starting to parse JSON document"));
-    QString startDocument,actionId,desktopFile,jasonPath;
+    QString startDocument,jasonPath;
     startDocument=startOpts.value("start-document");
     jasonPath=startOpts.value("kaidan-path");
     if(jsonParse(jsonOpenFile(startDocument))!=0){
-        updateProgressText(tr("Error occured"));
-        broadcastMessage(2,tr("Apples is stuck in a tree! We need to call the fire department!\n"));
-        emit toggleCloseButton(true);
+//        updateProgressText(tr("Error occured"));
+//        broadcastMessage(2,tr("Apples is stuck in a tree! We need to call the fire department!\n"));
         emit failedProcessing();
         return;
     }
@@ -43,21 +43,18 @@ void JasonParser::startParse(){
     return;
 }
 
-void JasonParser::setStartOpts(QString startDocument, QString jasonPath){
+void JasonParser::setStartOpts(QString startDocument){
     if(!startDocument.isEmpty())
         startOpts.insert("start-document",startDocument);
-    if(!jasonPath.isEmpty())
-        startOpts.insert("jason-path",jasonPath);
     QFileInfo cw(startDocument);
-    startOpts.insert("working-directory",cw.canonicalPath());
+    startOpts.insert("wd",cw.canonicalPath());
     return;
 }
 
 QJsonDocument JasonParser::jsonOpenFile(QString filename){
     QFile jDocFile;
-    QFileInfo cw(filename);
 
-    jDocFile.setFileName(startOpts.value("working-directory")+"/"+cw.fileName());
+    jDocFile.setFileName(filename);
     if (!jDocFile.exists()) {
         broadcastMessage(0,"ERROR: jDocFile::File not found\n");
         return QJsonDocument();
@@ -82,61 +79,70 @@ QJsonDocument JasonParser::jsonOpenFile(QString filename){
 
 int JasonParser::parseStage1(QJsonObject mainObject){
     /*
-     * Get variables and environment variables, insert
+     * Get variables and environment variables
      *
      */
-    QHash<QString,QHash<QString,QVariant> > underlyingObjects;
+    updateProgressText(tr("Importing variables and options"));
     foreach(QString key, mainObject.keys()){
         QJsonValue instanceValue = mainObject.value(key);
-        if(key=="variables")
-            underlyingObjects.insert("variables",jsonExamineArray(instanceValue.toArray()));
+        if(key=="variables"){
+            QHash<QString,QVariant> variablesTable = jsonExamineArray(instanceValue.toArray());
+            foreach(QString key,variablesTable.keys())
+                foreach(QString kKey, variablesTable.value(key).toHash().keys())
+                    if(kKey=="name")
+                        variableHandle(variablesTable.value(key).toHash().value("name").toString(),variablesTable.value(key).toHash().value("value").toString());
+        }
+        if(key=="kaidan-opts")
+            activeOptions.insert(key,instanceValue.toObject());
     }
-    if(parseUnderlyingObjects(underlyingObjects)!=0)
-        return 1;
+    //Let's insert the system environment variables into the substitutes system here, before we start resolving any of them.
+    if(activeOptions.value("kaidan-opts").isValid()){
+        QJsonObject kaidanOpts = activeOptions.value("kaidan-opts").toJsonObject();
+        foreach(QString key,kaidanOpts.keys()){
+            if(key=="import-env-variables"){
+                QProcessEnvironment variables = QProcessEnvironment::systemEnvironment();
+                foreach(QString var, kaidanOpts.value(key).toString().split(",")){
+                    variableHandle(var,variables.value(var));
+                }
+            }
+            if(key=="icon-size")
+                emit updateIconSize(kaidanOpts.value(key).toDouble());
+            if(key=="window-title")
+                emit updateProgressTitle(kaidanOpts.value(key).toString());
+        }
+    }
+    if(!startOpts.value("wd").isEmpty())
+        variableHandle("STARTDIR",startOpts.value("wd"));
+    resolveVariables();
+    foreach(QString key, mainObject.keys()){
+        QJsonValue instanceValue = mainObject.value(key);
+        if(key=="environment"){
+            QHash<QString,QVariant> thisEnvironment = jsonExamineArray(instanceValue.toArray());
+            foreach(QString thingy,thisEnvironment.keys())
+                environmentActivate(thisEnvironment.value(thingy).toHash());
+        }
+    }
+
+
+    updateProgressText(tr("Resolving variables"));
+    resolveVariables();
     procEnv.insert(QProcessEnvironment::systemEnvironment());
     return 0;
 }
 
-void JasonParser::stage2ActiveOptionAdd(QJsonValue instance,QString key){
-    if(!instance.isNull()){
-        QString insertKey = key;
-        int insertInt = 0;
-        while(activeOptions.contains(insertKey)){
-            insertInt++;
-            insertKey = key+"."+QString::number(insertInt);
-        }
-        if(instance.isString())
-            activeOptions.insert(insertKey,instance.toString());
-        if(instance.isObject())
-            activeOptions.insert(insertKey,instance.toObject());
-        if(instance.isDouble())
-            activeOptions.insert(insertKey,instance.toDouble());
-        if(instance.isArray())
-            activeOptions.insert(insertKey,instance.toArray());
-        if(instance.isBool())
-            activeOptions.insert(insertKey,instance.toBool());
-    }
-}
-
 int JasonParser::parseStage2(QJsonObject mainObject){
+    updateProgressText(tr("Importing installation steps"));
     foreach(QString key,mainObject.keys()){
         QJsonValue instanceValue = mainObject.value(key);
-
+        if(key=="steps"){
+            if(runProcesses(instanceValue.toArray())!=0)
+                return 1;
+        }
     }
     return 0;
 }
 
-int JasonParser::jsonParse(QJsonDocument jDoc){ //level is used to identify the parent instance of jsonOpenFile
-/*
-     *  - The JSON file is parsed in two stages; the JSON file is parsed randomly and as such
-     * you cannot expect data to appear at the right time. For this, parsing in two stages
-     * allows substituted values, systems, subsystems and etc. to listed in the first run
-     * and applied in the second run. The int level is used for recursive parsing where
-     * you do not want the process to proceed before everything is done.
-     *  - The execution and/or creation of a desktop file is done post-parsing when all variables
-     * are known and resolved.
-     *
-*/
+int JasonParser::jsonParse(QJsonDocument jDoc){
     QJsonObject mainTree = jDoc.object();
     if((mainTree.isEmpty())||(jDoc.isEmpty())){
         updateProgressText(tr("No objects found. Will not proceed."));
@@ -148,11 +154,11 @@ int JasonParser::jsonParse(QJsonDocument jDoc){ //level is used to identify the 
         return 1;
     }
 
-    updateProgressText(tr("Gathering active options"));
-    parseStage2(mainTree);
+    updateProgressText(tr("Parsing runtime steps"));
+    if(parseStage2(mainTree)!=0){
+        return 1;
+    }
 
-    updateProgressText(tr("Resolving variables"));
-    resolveVariables();
     return 0;
 }
 
@@ -233,65 +239,20 @@ void JasonParser::variableHandle(QString key, QString value){
 }
 
 
-void JasonParser::variablesImport(QHash<QString,QVariant> variables){
-    foreach(QString var,variables.keys()){
-        QHash<QString,QVariant> varHash = variables.value(var).toHash();
-        QString varType;
-        foreach(QString option,varHash.keys())
-            if(option=="type")
-                varType = varHash.value(option).toString();
-        if(varType=="config-input"){
-            QString defaultValue = varHash.value("default").toString(); //insert default value if no option is found in activeOptions
-            foreach(QString option,varHash.keys())
-                if((option=="input")&&(varHash.contains("name"))){
-                    QString variable = activeOptions.value(resolveVariable("%CONFIG_PREFIX%."+varHash.value(option).toString())).toString();
-                    if(variable.isEmpty())
-                        variable = defaultValue;
-                    substitutes.insert(varHash.value("name").toString(),variable);
-                }
-        }else if(varHash.value("name").isValid()&&varHash.value("value").isValid()){
-            setEnvVar(varHash.value("name").toString(),resolveVariable(varHash.value("value").toString()));
-        }else
-            broadcastMessage(1,"unsupported variable type"+varType);
-    }
-}
-
-
-int JasonParser::parseUnderlyingObjects(QHash<QString, QHash<QString, QVariant> > underlyingObjects){
-    QHash<QString, QVariant> variablesTable;
-    QHash<QString,QVariant> procSteps;
-    //Grab tables from inside the input table
-    foreach(QString key, underlyingObjects.keys()){
-        if(key=="variables")
-            variablesTable = underlyingObjects.value(key);
-        if(key=="steps")
-            procSteps = underlyingObjects.value(key);
-    }
-    //Handle the tables in their different ways, nothing will be returned
-    foreach(QString key,variablesTable.keys()){
-        foreach(QString kKey, variablesTable.value(key).toHash().keys())
-            if(kKey=="name")
-                variableHandle(variablesTable.value(key).toHash().value("name").toString(),variablesTable.value(key).toHash().value("value").toString());
-    }
-
-    return 0;
-}
-
-
 void JasonParser::resolveVariables(){
-    QStringList systemVariables;
+//    QStringList systemVariables;
     //System variables that are used in substitution for internal variables. Messy indeed, but it kind of works in a simple way.
-    foreach(QString opt, activeOptions.keys())
-        if(opt.startsWith("shell.properties"))
-            foreach(QString key, activeOptions.value(opt).toJsonObject().keys())
-                if(key=="import-env-variables")
-                    systemVariables=activeOptions.value(opt).toJsonObject().value(key).toString().split(",");
-    if(systemVariables.isEmpty())
-        broadcastMessage(1,tr("Note: No system variables were imported. This may be a bad sign.\n"));
-    foreach(QString variable, systemVariables){
-        QProcessEnvironment variableValue = QProcessEnvironment::systemEnvironment();
-        substitutes.insert(variable,variableValue.value(variable));
-    }
+//    foreach(QString opt, activeOptions.keys())
+//        if(opt.startsWith("shell.properties"))
+//            foreach(QString key, activeOptions.value(opt).toJsonObject().keys())
+//                if(key=="import-env-variables")
+//                    systemVariables=activeOptions.value(opt).toJsonObject().value(key).toString().split(",");
+//    if(systemVariables.isEmpty())
+//        broadcastMessage(1,tr("Note: No system variables were imported. This may be a bad sign.\n"));
+//    foreach(QString variable, systemVariables){
+//        QProcessEnvironment variableValue = QProcessEnvironment::systemEnvironment();
+//        substitutes.insert(variable,variableValue.value(variable));
+//    }
 
 
     int indicator = 0; //Indicator for whether the operation is done or not. May cause an infinite loop when a variable cannot be resolved.
@@ -323,8 +284,6 @@ QString JasonParser::resolveVariable(QString variable){
         replace.prepend("%");replace.append("%");
         variable = variable.replace(replace,substitutes.value(sub));
     }
-    if(!variable.contains("%"))
-        return variable;
     return variable;
 }
 
@@ -349,45 +308,246 @@ void JasonParser::environmentActivate(QHash<QString,QVariant> environmentHash){
     return;
 }
 
-int JasonParser::runProcesses(){
-    /*
-     *
-     * launchId:
-     *  - Either is empty (thus launching the default program) or filled with an ID. All preruns and postruns are
-     * run as normal before and after, but prefixes and suffixes are not added.
-     *
-     * Runmodes:
-     *  - 0: Launch action or default option
-    */
 
-//    QString desktopTitle;
-//    foreach(QString launchable,launchables.keys())
-//        if(launchable==launchId){
-//            QString argument,program,workDir,name;
-//            QHash<QString,QVariant> launchObject = launchables.value(launchable).toHash();
-//            foreach(QString key,launchObject.keys()){
-//                if(key=="command")
-//                    argument=resolveVariable(launchObject.value(key).toString());
-//                if(key=="launch-prefix")
-//                    program=resolveVariable(launchObject.value(key).toString());
-//                if(key=="workingdir")
-//                    workDir=resolveVariable(launchObject.value(key).toString());
-//                if(key=="desktop.title")
-//                    name=resolveVariable(launchObject.value(key).toString());
-//            }
-//            if(launchId=="default"){
-//                foreach(QString key,launchables.value("default.desktop").toHash().keys())
-//                    if(key=="displayname")
-//                        name=resolveVariable(launchables.value("default.desktop").toHash().value(key).toString());
-//            }
-//            desktopTitle=name;
-//            updateProgressTitle(name);
-//            if(!argument.isEmpty())
-//                executeProcess(argument,program,workDir,name,runprefixStr,runsuffixStr);
-//        }
+int JasonParser::evaluateKaidanStep(QJsonObject kaidanStep){
+    if(kaidanStep.value("type").isUndefined())
+        return 1; //No type? No go.
+    QString type = kaidanStep.value("type").toString();
+    if(type=="install-payload"){
+        if(kaidanStep.value("source").isUndefined())
+            return 1;
+        if(kaidanStep.value("target").isUndefined())
+            return 1;
+    }
+    if(type=="download-file"){
+        if(kaidanStep.value("source").isUndefined())
+            return 1;
+        if(kaidanStep.value("target").isUndefined())
+            return 1;
+    }
+    if(type=="execute-commandline")
+        if(kaidanStep.value("commandline").isUndefined())
+            return 1;
+    if(type=="execute-file")
+        if(kaidanStep.value("target").isUndefined())
+            return 1;
+    return 0;
 }
 
-void JasonParser::executeProcess(QString argument, QString program, QString workDir, QString title){
+
+int JasonParser::executeKaidanStep(QJsonObject kaidanStep){
+    if(!kaidanStep.value("desktop.title").isUndefined())
+        updateProgressText(kaidanStep.value("desktop.title").toString());
+    if(!kaidanStep.value("desktop.icon").isUndefined())
+        updateProgressIcon(resolveVariable(kaidanStep.value("desktop.icon").toString()));
+    QString type = kaidanStep.value("type").toString();
+    if(type=="download-file"){
+        QString targetFile,sourceUrl;
+        targetFile = resolveVariable(kaidanStep.value("target").toString());
+        sourceUrl = kaidanStep.value("source").toString();
+        QFile downloadChecker(targetFile);
+        if(downloadChecker.exists()){
+            updateProgressText(tr("File exists. Will assume it is a preloaded copy."));
+            return 0;
+        }
+        Downloader dlInstance; //We need to pass signals through from here to the GUI, with some modifications to what is presented.
+        QThread workerThread;
+        dlInstance.moveToThread(&workerThread);
+        QEventLoop downloadWaiter;
+        emit changeSProgressBarVisibility(true);
+        connect(&dlInstance,SIGNAL(finishedDownload()),&workerThread,SLOT(quit()));
+        connect(&dlInstance,SIGNAL(failedDownload()),&workerThread,SLOT(quit()));
+        connect(&dlInstance,SIGNAL(finishedDownload()),&downloadWaiter,SLOT(quit()));
+        connect(&dlInstance,SIGNAL(failedDownload()),&downloadWaiter,SLOT(quit()));
+        connect(&dlInstance,SIGNAL(reportDownloadProgress(int)),this,SLOT(forwardSecondaryProgress(int)));
+        connect(&workerThread,SIGNAL(started()),&dlInstance,SLOT(startDownloads()));
+        dlInstance.downloadUrl(sourceUrl,targetFile);
+        workerThread.start();
+        downloadWaiter.exec();
+        if(!downloadChecker.exists())
+            return 1;
+        emit changeSProgressBarVisibility(false);
+    }
+    if(type=="execute-commandline"){
+        QJsonObject shellOptions = activeOptions.value("kaidan-opts").toJsonObject();
+        QString shell = "sh";
+        QString shellArg = "-c";
+        QStringList arguments;
+        QString workdir;
+        bool validate = false;
+        bool lazyExitStatus = false;
+        foreach(QString key,shellOptions.keys()){
+            if(key=="shell")
+                shell=shellOptions.value(key).toString();
+            if(key=="command.argument")
+                shellArg=shellOptions.value(key).toString();
+        }
+        arguments.append(shellArg);
+        arguments.append("--");
+        arguments.append(resolveVariable(kaidanStep.value("commandline").toString()));
+        workdir = resolveVariable(kaidanStep.value("workdir").toString(""));
+        if(!kaidanStep.value("validate").isUndefined())
+            validate = kaidanStep.value("validate").toBool();
+        if(!kaidanStep.value("lazy-exit-status").isUndefined())
+            lazyExitStatus = kaidanStep.value("lazy-exit-status").toBool();
+        int execResult = executeProcess(shell,arguments,createProcEnv(kaidanStep.value("environment").toArray()),workdir,lazyExitStatus);
+        if(validate)
+            if(execResult!=0){
+                updateProgressText(tr("Executing commandline exited with invalid exit status."));
+                return 1;
+            }
+    }
+    if(type=="execute-file"){
+        QString program;
+        QStringList arguments;
+        QString workdir;
+        bool validate = false;
+        bool lazyExitStatus = false;
+        program = resolveVariable(kaidanStep.value("target").toString());
+        if(!kaidanStep.value("arguments").isUndefined())
+            arguments.append(kaidanStep.value("arguments").toString());
+        arguments.append(kaidanStep.value("commandline").toString());
+        workdir = resolveVariable(kaidanStep.value("workdir").toString(""));
+        if(!kaidanStep.value("validate").isUndefined())
+            validate = kaidanStep.value("validate").toBool();
+        if(!kaidanStep.value("lazy-exit-status").isUndefined())
+            lazyExitStatus = kaidanStep.value("lazy-exit-status").toBool();
+        int execResult = executeProcess(program,arguments,createProcEnv(kaidanStep.value("environment").toArray()),workdir,lazyExitStatus);
+        if(validate)
+            if(execResult!=0){
+                updateProgressText(tr("Executing file exited with invalid exit status."));
+                return 1;
+            }
+    }
+    if(type=="install-payload"){
+        QString sourceFilename,targetFilename;
+        sourceFilename = resolveVariable(kaidanStep.value("source").toString());
+        targetFilename = resolveVariable(kaidanStep.value("target").toString());
+        if((sourceFilename.isEmpty())||(targetFilename.isEmpty())){
+            updateProgressText(tr("Failed to install payload; no filenames provided."));
+            return 1;
+        }
+        QFileInfo sourceFileInfo(sourceFilename);
+        if(sourceFileInfo.isFile()){
+            QFile sourceFile(sourceFilename);
+            if(sourceFile.copy(targetFilename)){
+                updateProgressText(tr("Failed to copy file, either the file exists or it cannot be created."));
+                return 1;
+            }
+        }else if(sourceFileInfo.isDir()){
+            QDir sourceDir(sourceFilename);
+            QDir targetDir(targetFilename);
+            if(!sourceDir.exists()){
+                updateProgressText(tr("Payload referenced in JSON does not exist."));
+                return 1;
+            }
+            if(!targetDir.exists())
+                targetDir.mkpath(targetFilename);
+            foreach(QString entry,sourceDir.entryList(QDir::Files|QDir::Dirs|QDir::Hidden|QDir::NoDotAndDotDot)){
+                QString entryFN = sourceFilename+QString("/")+entry;
+                QString entryDFN = targetFilename+QString("/")+entry;
+                QFileInfo *entryInfo = new QFileInfo(entryFN);
+                if(entryInfo->isDir()){
+                    if(copyDirectory(entryFN,entryDFN)!=0)
+                        return 1;
+                }
+                if(entryInfo->isFile()){
+                    QFile *fileOperator = new QFile(entryFN);
+                    fileOperator->copy(entryDFN);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+
+int JasonParser::copyDirectory(QString oldName, QString newName){
+    QDir sourceDir(oldName);
+    QDir targetDir(newName);
+    if(!targetDir.exists())
+        targetDir.mkdir(newName);
+    foreach(QString entry,sourceDir.entryList(QDir::Files|QDir::Dirs|QDir::Hidden|QDir::NoDotAndDotDot)){
+        QString entryFN = oldName+QString("/")+entry;
+        QString entryDFN = newName+QString("/")+entry;
+        QFileInfo *entryInfo = new QFileInfo(entryFN);
+        if(entryInfo->isDir()){
+            if(copyDirectory(entryFN,entryDFN)!=0)
+                return 1;
+        }
+        if(entryInfo->isFile()){
+            QFile *fileOperator = new QFile(entryFN);
+            if(!fileOperator->copy(entryDFN)){
+                updateProgressText(tr("Failure upon installing payload: Will not overwrite existing file."));
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+
+void JasonParser::forwardSecondaryProgress(int value){
+    emit changeSProgressBarValue(value);
+}
+
+
+QProcessEnvironment JasonParser::createProcEnv(QJsonArray environment){
+    QProcessEnvironment returnEnv;
+    for(int i=0;i<environment.count();i++){
+        QJsonObject currentEnv = environment.at(i).toObject();
+        returnEnv.insert(currentEnv.value("name").toString(),currentEnv.value("value").toString());
+    }
+    return returnEnv;
+}
+
+
+int JasonParser::runProcesses(QJsonArray stepsArray){
+    //First, we want to parse and put all the steps into memory. Once the Kaidan train starts, there's no stopping it. Also, error-checking.
+    QHash<QString,QJsonObject> stepsHash;
+    for(int i=0;i<stepsArray.count();i++){
+        QJsonObject currentStep = stepsArray.at(i).toObject();
+        foreach(QString key, currentStep.keys()){
+            if(key=="name"){
+                QString stepName = currentStep.value(key).toString();
+                currentStep.remove(key);
+                stepsHash.insert(stepName,currentStep);
+                break; //We don't want to waste time
+            }
+            if((key=="init-step")&&(currentStep.value(key).toBool(false))){
+                currentStep.remove(key);
+                stepsHash.insert("init-step",currentStep); //A quick and easy way of identifying the first step.
+                break;
+            }
+        }
+    }
+    //After inserting the objects, we do a testrun to see that they are all okay and functional.
+    if(!stepsHash.value("init-step").isEmpty()){ //We need this to begin, otherwise, puke.
+        foreach(QJsonObject step,stepsHash.values())
+            if(evaluateKaidanStep(step)!=0)
+                return 1;
+    }else
+        return 1;
+    QString currentStepKey = "init-step";
+    QJsonObject currentStep = stepsHash.value(currentStepKey);
+    stepsHash.remove(currentStepKey);
+    executeKaidanStep(currentStep);
+    while(!stepsHash.isEmpty()){
+        currentStepKey = currentStep.value("proceed-to").toString();
+        if(currentStepKey.isEmpty())
+            break;
+        currentStep = stepsHash.value(currentStepKey);
+        stepsHash.remove(currentStepKey);
+        if(executeKaidanStep(currentStep)!=0){
+            emit failedProcessing();
+            return 1;
+        }
+    }
+    finishedProcessing();
+    return 0;
+}
+
+int JasonParser::executeProcess(QString program,QStringList arguments,QProcessEnvironment localProcEnv,QString workDir,bool lazyExitStatus){
     /*
      * program - Prefixed to argument, specifically it could be 'wine' or another frontend program such as
      * 'mupen64plus'. It is not supposed to run shells.
@@ -395,64 +555,40 @@ void JasonParser::executeProcess(QString argument, QString program, QString work
      * workDir - The wished working directory for the operation.
     */
 
-    /*
-     * TODO:
-     *  - Insert prefix and suffix into the command line by way of prepending and appending.
-     *  - Show some GUI magic run by a separate thread as a user-friendly indicator for progress, may also
-     *      want to show a dialog button for detaching processes so that postrun doesn't run prematurely.
-     *  - Implement programming to pick up aforementioned option
-     *  - Add the desktop file generation function and decide how the Exec option should look
-     *  - Add even more pretty GUIs
-     *
-    */
-
-    QString shell = "sh"; //Just defaults, in case nothing is specified.
-    QString shellArg = "-c"; //We don't want the shell to pick up more arguments.
-    QJsonObject shellOptions = activeOptions.value("kaidan-opts").toJsonObject();
-    foreach(QString key,shellOptions.keys()){
-        if(key=="shell")
-            shell=shellOptions.value(key).toString();
-        if(key=="command.argument")
-            shellArg=shellOptions.value(key).toString();
-    }
-    if(shell.isEmpty())
-        return;
+    if(program.isEmpty())
+        return 1;
 
     QProcess *executer = new QProcess(this);
-    QStringList arguments;
-    executer->setProcessEnvironment(procEnv);
+    QProcessEnvironment localEnv = procEnv;
+    localEnv.insert(localProcEnv);
+    executer->setProcessEnvironment(localEnv);
     executer->setProcessChannelMode(QProcess::SeparateChannels);
     if(!workDir.isEmpty())
         executer->setWorkingDirectory(workDir);
-    executer->setProgram(shell);
-    arguments.append(shellArg);
-    arguments.append("--");
-
-    QString execString;
-    execString = program+" "+argument;
-
-    arguments.append(execString);
+    executer->setProgram(program);
     executer->setArguments(arguments);
 
     //Connect signals and slots as well as update the title.
-    connect(executer, SIGNAL(finished(int,QProcess::ExitStatus)),SLOT(processFinished(int,QProcess::ExitStatus)));
+    if(!lazyExitStatus)
+        connect(executer, SIGNAL(finished(int,QProcess::ExitStatus)),SLOT(processFinished(int,QProcess::ExitStatus)));
     connect(executer, SIGNAL(error(QProcess::ProcessError)),SLOT(processOutputError(QProcess::ProcessError)));
     connect(executer,SIGNAL(started()),SLOT(processStarted()));
-    updateProgressText(title);
 
     executer->start();
     executer->waitForFinished(-1);
-    if((executer->exitCode()!=0)||(executer->exitStatus()!=0)){
-        QString stdOut,stdErr,argumentString;
-        stdOut = executer->readAllStandardOutput();
-        stdErr = executer->readAllStandardError();
-        foreach(QString arg,executer->arguments())
-            argumentString.append(arg+" ");
-        stdOut.prepend(tr("Executed: %1 %2\n").arg(executer->program()).arg(argumentString));
-        stdOut.prepend(tr("Process returned with status: %1.\n").arg(QString::number(executer->exitCode())));
-        stdOut.prepend(tr("QProcess returned with status: %1.\n").arg(QString::number(executer->exitStatus())));
-        emit emitOutput(stdOut,stdErr);
-    }
+    if(!lazyExitStatus)
+        if((executer->exitCode()!=0)||(executer->exitStatus()!=0)){
+            QString stdOut,stdErr,argumentString;
+            stdOut = executer->readAllStandardOutput();
+            stdErr = executer->readAllStandardError();
+            foreach(QString arg,executer->arguments())
+                argumentString.append(arg+" ");
+            stdOut.prepend(tr("Executed: %1 %2\n").arg(executer->program()).arg(argumentString));
+            stdOut.prepend(tr("Process returned with status: %1.\n").arg(QString::number(executer->exitCode())));
+            stdOut.prepend(tr("QProcess returned with status: %1.\n").arg(QString::number(executer->exitStatus())));
+            emit emitOutput(stdOut,stdErr);
+        }
+    return executer->exitCode();
 }
 
 void JasonParser::processFinished(int exitCode, QProcess::ExitStatus exitStatus){

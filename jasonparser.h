@@ -6,6 +6,7 @@
 #include <QJsonArray>
 
 #include <QFile>
+#include <QDir>
 #include <QFileInfo>
 #include <QTextStream>
 #include <QDebug>
@@ -16,6 +17,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QEventLoop>
+#include <QThread>
 
 class JasonParser : public QObject
 {
@@ -26,7 +28,7 @@ public:
 
     //General
     void testEnvironment();
-    void setStartOpts(QString startDocument, QString jasonPath);
+    void setStartOpts(QString startDocument);
 
     int exitResult;
 
@@ -37,6 +39,7 @@ public slots:
 private slots:
     void processOutputError(QProcess::ProcessError processError);
     void processFinished(int exitCode,QProcess::ExitStatus exitStatus);
+    void forwardSecondaryProgress(int value);
 
 signals:
 
@@ -44,13 +47,16 @@ signals:
     void finishedProcessing();
     void failedProcessing();
     //Directly about the GUI
-    void toggleCloseButton(bool);
     void updateProgressText(QString);
     void updateProgressTitle(QString);
+    void updateProgressIcon(QString);
     void broadcastMessage(int,QString);
-    void toggleProgressVisible(bool);
-    void changeProgressBarRange(int,int); //0,0 will make it indefinite, something else will make it normal.
+    void changeProgressBarRange(qint64,qint64); //0,0 will make it indefinite, something else will make it normal.
     void changeProgressBarValue(int);
+    void changeSProgressBarRange(qint64,qint64);
+    void changeSProgressBarValue(int);
+    void changeSProgressBarVisibility(bool);
+    void updateIconSize(int);
 
     //Related to processes
     void mainProcessStart();
@@ -66,7 +72,6 @@ private:
     //Sections of parsing process
     int parseStage1(QJsonObject mainObject);
     int parseStage2(QJsonObject mainObject);
-    void stage2ActiveOptionAdd(QJsonValue instanceValue,QString key);
 
     //JSON
     QJsonDocument jsonOpenFile(QString filename);
@@ -80,21 +85,29 @@ private:
     void variableHandle(QString key, QString value);
     void resolveVariables();
     QString resolveVariable(QString variable);
-    int parseUnderlyingObjects(QHash<QString, QHash<QString,QVariant> > underlyingObjects);
+
+    QProcessEnvironment createProcEnv(QJsonArray environment);
 
     //Activate options
     void environmentActivate(QHash<QString,QVariant> environmentHash);
-    void variablesImport(QHash<QString,QVariant> variables);
 
     //Fucking finally
-    int runProcesses();
-    void executeProcess(QString argument,QString program,QString workDir, QString title);
+    int runProcesses(QJsonArray stepsArray);
+    int executeProcess(QString programs,QStringList arguments,QProcessEnvironment localProcEnv,QString workDir,bool lazyExitStatus);
     QProcess *executer;
+
+    //Kaidan steps
+    int evaluateKaidanStep(QJsonObject kaidanStep); //We use this to see if it's a valid step
+    int executeKaidanStep(QJsonObject kaidanStep);
+
+    //Payload operations, they do recursion. We should optimize it so that we won't encounter a stack overflow.
+    int copyDirectory(QString oldName, QString newName);
+    QFileInfo *entryInfo;
+    QFile *fileOperator;
 
     //Hashes/arrays/vectors
     QHash<QString, QString> substitutes;
     QHash<QString,QVariant> activeOptions;
-    QHash<QString,QVariant> runSteps;
 
 };
 
