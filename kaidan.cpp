@@ -16,7 +16,6 @@ Kaidan::~Kaidan()
 }
 
 void Kaidan::initializeParse(QString startDocument){
-    startDocument = "/home/havard/Code/kaidan-test/kaidan-test.json";
     QFile startDocTest(startDocument);
     if((startDocument.isEmpty())||(!startDocTest.exists())){
         QFileDialog getInputFile;
