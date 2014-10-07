@@ -430,7 +430,11 @@ int JasonParser::executeKaidanStep(QJsonObject kaidanStep){
         QFileInfo sourceFileInfo(sourceFilename);
         if(sourceFileInfo.isFile()){
             QFile sourceFile(sourceFilename);
-            if(sourceFile.copy(targetFilename)){
+            if(sourceFile.exists()){
+                updateProgressText(tr("File exists. Skipping."));
+                return 0;
+            }
+            if(!sourceFile.copy(targetFilename)){
                 updateProgressText(tr("Failed to copy file, either the file exists or it cannot be created."));
                 return 1;
             }
