@@ -101,7 +101,7 @@ private:
     int executeKaidanStep(QJsonObject kaidanStep);
 
     //Payload operations, they do recursion. We should optimize it so that we won't encounter a stack overflow.
-    int copyDirectory(QString oldName, QString newName);
+    int copyDirectory(QString oldName, QString newName, bool caseSense);
     QFileInfo *entryInfo;
     QFile *fileOperator;
 
