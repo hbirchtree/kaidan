@@ -96,6 +96,7 @@ int JasonParser::parseStage1(QJsonObject mainObject){
             activeOptions.insert(key,instanceValue.toObject());
     }
     //Let's insert the system environment variables into the substitutes system here, before we start resolving any of them.
+    procEnv.insert(QProcessEnvironment::systemEnvironment());
     if(activeOptions.value("kaidan-opts").isValid()){
         QJsonObject kaidanOpts = activeOptions.value("kaidan-opts").toJsonObject();
         foreach(QString key,kaidanOpts.keys()){
@@ -126,7 +127,6 @@ int JasonParser::parseStage1(QJsonObject mainObject){
 
     updateProgressText(tr("Resolving variables"));
     resolveVariables();
-    procEnv.insert(QProcessEnvironment::systemEnvironment());
     return 0;
 }
 
