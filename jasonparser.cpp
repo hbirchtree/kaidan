@@ -331,6 +331,9 @@ int JasonParser::evaluateKaidanStep(QJsonObject kaidanStep){
     if(type=="execute-file")
         if(kaidanStep.value("target").isUndefined())
             return 1;
+    if(type=="user-message")
+        if(kaidanStep.value("message").isUndefined())
+            return 1;
     return 0;
 }
 
@@ -467,6 +470,12 @@ int JasonParser::executeKaidanStep(QJsonObject kaidanStep){
                 }
             }
         }
+    }
+    if(type=="user-message"){
+        if(kaidanStep.value("message").toString().isEmpty())
+            return 0;
+        QString message = kaidanStep.value("message").toString();
+        broadcastMessage(0,message);
     }
     return 0;
 }
