@@ -427,22 +427,16 @@ int JasonParser::executeKaidanStep(QJsonObject kaidanStep){
         sourceFilename = resolveVariable(kaidanStep.value("source").toString());
         targetFilename = resolveVariable(kaidanStep.value("target").toString());
         bool caseSense = kaidanStep.value("case-sensitivity").toBool(true);
-        qDebug() << caseSense;
+        bool overwriteFile = kaidanStep.value("overwrite-files").toBool(false);
+        bool appendFile = kaidanStep.value("append-file").toBool(false);
         if((sourceFilename.isEmpty())||(targetFilename.isEmpty())){
             updateProgressText(tr("Failed to install payload; no filenames provided."));
             return 1;
         }
         QFileInfo sourceFileInfo(sourceFilename);
         if(sourceFileInfo.isFile()){
-            QFile sourceFile(sourceFilename);
-            if(sourceFile.exists()){
-                updateProgressText(tr("File exists. Skipping."));
-                return 0;
-            }
-            if(!sourceFile.copy(targetFilename)){
-                updateProgressText(tr("Failed to copy file, either the file exists or it cannot be created."));
-                return 1;
-            }
+            QFileInfo *entryInfo = new QFileInfo(sourceFilename);
+            applyPayloadFile(sourceFilename,targetFilename,entryInfo,overwriteFile,appendFile);
         }else if(sourceFileInfo.isDir()){
             QDir sourceDir(sourceFilename);
             QDir targetDir(targetFilename);
@@ -457,16 +451,12 @@ int JasonParser::executeKaidanStep(QJsonObject kaidanStep){
                 QString entryDFN = targetFilename+QString("/")+entry;
                 QFileInfo *entryInfo = new QFileInfo(entryFN);
                 if(entryInfo->isDir()){
-                    if(copyDirectory(entryFN,entryDFN,caseSense)!=0){
+                    if(copyDirectory(entryFN,entryDFN,caseSense,overwriteFile,appendFile)!=0){
                         return 1;
                     }
                 }
                 if(entryInfo->isFile()){
-                    QFile *fileOperator = new QFile(entryFN);
-                    if(!fileOperator->copy(entryDFN)){
-                        updateProgressText(tr("Failure upon installing payload: Will not overwrite existing file."));
-                        return 1;
-                    }
+                    applyPayloadFile(entryFN,entryDFN,entryInfo,overwriteFile,appendFile);
                 }
             }
         }
@@ -480,8 +470,40 @@ int JasonParser::executeKaidanStep(QJsonObject kaidanStep){
     return 0;
 }
 
+int JasonParser::applyPayloadFile(QString sourceFilename,QString targetFilename,QFileInfo *entryInfo, bool overwriteFile,bool appendFile){
+    QFile *fileOperator = new QFile(sourceFilename);
+    QFile *destFileOperator = new QFile(targetFilename);
+    QFileInfo *destEntryInfo = new QFileInfo(targetFilename);
+    QDir targetDir(destEntryInfo->path());
+    if(!targetDir.exists())
+        targetDir.mkpath(destEntryInfo->path());
+    if(appendFile&&destFileOperator->exists()){
+        if(destFileOperator->open(QIODevice::WriteOnly|QIODevice::Append|QIODevice::Text)&&fileOperator->open(QIODevice::ReadOnly)){
+            if(destFileOperator->write(fileOperator->readAll())==-1){
+                updateProgressText(tr("Failure upon installing payload: Could not append to file"));
+                return 1;
+            }else
+                destFileOperator->close();
+        }else{
+            updateProgressText(tr("Failure upon installing payload: Could not open file to append"));
+            return 1;
+        }
+        return 0;
+    }
+    if(overwriteFile&&destFileOperator->exists()){
+        if(!destFileOperator->remove()){
+            updateProgressText(tr("Failure upon installing payload: Could not remove existing file"));
+            return 1;
+        }
+    }
+    if(!fileOperator->copy(targetFilename)){
+        updateProgressText(tr("Failure upon installing payload: Will not overwrite existing file."));
+        return 1;
+    }
+    return 0;
+}
 
-int JasonParser::copyDirectory(QString oldName, QString newName,bool caseSense){
+int JasonParser::copyDirectory(QString oldName, QString newName, bool caseSense, bool overwriteFile, bool appendFile){
     QDir sourceDir(oldName);
     QDir targetDir(newName);
     if(!targetDir.exists())
@@ -491,17 +513,13 @@ int JasonParser::copyDirectory(QString oldName, QString newName,bool caseSense){
         QString entryDFN = newName+QString("/")+entry;
         QFileInfo *entryInfo = new QFileInfo(entryFN);
         if(entryInfo->isDir()){
-            if(copyDirectory(entryFN,entryDFN,caseSense)!=0){
+            if(copyDirectory(entryFN,entryDFN,caseSense,overwriteFile,appendFile)!=0){
                 updateProgressText(tr("Failure upon installing payload: Failed to copy directory."));
                 return 1;
             }
         }
         if(entryInfo->isFile()){
-            QFile *fileOperator = new QFile(entryFN);
-            if(!fileOperator->copy(entryDFN)){
-                updateProgressText(tr("Failure upon installing payload: Will not overwrite existing file."));
-                return 1;
-            }
+            applyPayloadFile(entryFN,entryDFN,entryInfo,overwriteFile,appendFile);
         }
     }
     return 0;
