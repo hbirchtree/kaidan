@@ -66,6 +66,20 @@ signals:
     void emitOutput(QString,QString);
 
 private:
+
+    enum FileOperation {
+        FILE_APPEND,FILE_COPY,FILE_REMOVE,
+        DIR_CREATE,DIR_COPY,DIR_REMOVE
+    };
+    void logFileAction(QFileInfo *target,FileOperation detail){
+        QFile logFile("kaidan-file-actions.log");
+        if(!logFile.open(QIODevice::WriteOnly|QIODevice::Append))
+            return;
+        QTextStream out(&logFile);
+        out << fileOperations.value(detail) << "{" << target->absoluteFilePath() << "}{" << " -> " << target->permissions() << "}\n";
+        logFile.close();
+    }
+    QHash<FileOperation,QString> fileOperations;
     //General
     QHash<QString, QString> startOpts;
     int jsonParse(QJsonDocument jDoc);

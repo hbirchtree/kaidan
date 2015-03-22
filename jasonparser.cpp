@@ -2,7 +2,12 @@
 #include "downloader.h"
 
 JasonParser::JasonParser(){
-
+    fileOperations.insert(FILE_APPEND,"APP");
+    fileOperations.insert(FILE_REMOVE,"RM");
+    fileOperations.insert(FILE_COPY,"CP");
+    fileOperations.insert(DIR_CREATE,"MKDIR");
+    fileOperations.insert(DIR_REMOVE,"RMDIR");
+    fileOperations.insert(DIR_COPY,"CPR");
 }
 
 JasonParser::~JasonParser(){
@@ -440,24 +445,30 @@ int JasonParser::executeKaidanStep(QJsonObject kaidanStep){
         }else if(sourceFileInfo.isDir()){
             QDir sourceDir(sourceFilename);
             QDir targetDir(targetFilename);
+            QFileInfo *targetDirInfo = new QFileInfo(targetFilename);
             if(!sourceDir.exists()){
                 updateProgressText(tr("Payload referenced in JSON does not exist."));
                 return 1;
             }
             if(!targetDir.exists())
-                targetDir.mkpath(targetFilename);
+                if(targetDir.mkpath(targetFilename))
+                    logFileAction(targetDirInfo,DIR_CREATE);
             foreach(QString entry,sourceDir.entryList(QDir::Files|QDir::Dirs|QDir::Hidden|QDir::NoDotAndDotDot)){
                 QString entryFN = sourceFilename+QString("/")+entry;
                 QString entryDFN = targetFilename+QString("/")+entry;
                 QFileInfo *entryInfo = new QFileInfo(entryFN);
+                QFileInfo *entryDInfo = new QFileInfo(entryDFN);
                 if(entryInfo->isDir()){
                     if(copyDirectory(entryFN,entryDFN,caseSense,overwriteFile,appendFile)!=0){
                         return 1;
-                    }
+                    }else
+                        logFileAction(entryDInfo,DIR_COPY);
                 }
                 if(entryInfo->isFile()){
                     applyPayloadFile(entryFN,entryDFN,entryInfo,overwriteFile,appendFile);
                 }
+                delete entryInfo;
+                delete entryDInfo;
             }
         }
     }
@@ -476,14 +487,17 @@ int JasonParser::applyPayloadFile(QString sourceFilename,QString targetFilename,
     QFileInfo *destEntryInfo = new QFileInfo(targetFilename);
     QDir targetDir(destEntryInfo->path());
     if(!targetDir.exists())
-        targetDir.mkpath(destEntryInfo->path());
+        if(targetDir.mkpath(destEntryInfo->path()))
+            logFileAction(destEntryInfo,DIR_CREATE);
     if(appendFile&&destFileOperator->exists()){
         if(destFileOperator->open(QIODevice::WriteOnly|QIODevice::Append|QIODevice::Text)&&fileOperator->open(QIODevice::ReadOnly)){
             if(destFileOperator->write(fileOperator->readAll())==-1){
                 updateProgressText(tr("Failure upon installing payload: Could not append to file"));
                 return 1;
-            }else
+            }else{
+                logFileAction(destEntryInfo,FILE_APPEND);
                 destFileOperator->close();
+            }
         }else{
             updateProgressText(tr("Failure upon installing payload: Could not open file to append"));
             return 1;
@@ -494,29 +508,35 @@ int JasonParser::applyPayloadFile(QString sourceFilename,QString targetFilename,
         if(!destFileOperator->remove()){
             updateProgressText(tr("Failure upon installing payload: Could not remove existing file"));
             return 1;
-        }
+        }else
+            logFileAction(destEntryInfo,FILE_REMOVE);
     }
     if(!fileOperator->copy(targetFilename)){
         updateProgressText(tr("Failure upon installing payload: Will not overwrite existing file."));
         return 1;
-    }
+    }else
+        logFileAction(destEntryInfo,FILE_COPY);
     return 0;
 }
 
 int JasonParser::copyDirectory(QString oldName, QString newName, bool caseSense, bool overwriteFile, bool appendFile){
     QDir sourceDir(oldName);
     QDir targetDir(newName);
+    QFileInfo *targetDirInfo = new QFileInfo(newName);
     if(!targetDir.exists())
-        targetDir.mkdir(newName);
+        if(targetDir.mkdir(newName))
+            logFileAction(targetDirInfo,DIR_CREATE);
     foreach(QString entry,sourceDir.entryList(QDir::Files|QDir::Dirs|QDir::Hidden|QDir::NoDotAndDotDot)){
         QString entryFN = oldName+QString("/")+entry;
         QString entryDFN = newName+QString("/")+entry;
         QFileInfo *entryInfo = new QFileInfo(entryFN);
+        QFileInfo *entryDInfo = new QFileInfo(entryDFN);
         if(entryInfo->isDir()){
             if(copyDirectory(entryFN,entryDFN,caseSense,overwriteFile,appendFile)!=0){
                 updateProgressText(tr("Failure upon installing payload: Failed to copy directory."));
                 return 1;
-            }
+            }else
+                logFileAction(entryDInfo,DIR_COPY);
         }
         if(entryInfo->isFile()){
             applyPayloadFile(entryFN,entryDFN,entryInfo,overwriteFile,appendFile);
