@@ -22,46 +22,30 @@ public:
     explicit Kaidan(QWidget *parent = 0);
     ~Kaidan();
 
-    void initializeParse(QString startDocument);
-
-private slots:
+    void initializeParse(QString startDocument, QString actionId, QString desktopFile, QString jasonPath);
 
 private:
     Ui::Kaidan *ui;
 
-
-    //displayLogs
-    QDialog outputWindow;
-    QGridLayout *outputLayout;
-    QTextEdit *errEdit,*outEdit;
-
-    //displayMessage
-    QMessageBox *messageBox;
+    QList<QMetaObject::Connection> connections;
 
     //updateProgressIcon
     QFile *imageFile;
     QPixmap *newLabelIcon;
 
-public slots:
-    //Interface modificators
+
+private slots:
     void updateProgressText(QString newText);
     void updateProgressIcon(QString newIconPath);
     void updateWindowTitle(QString newTitle);
-    void updateMainProgressBarLimits(qint64 min,qint64 max);
+
+    void updateMainProgressBarLimits(qint64 min, qint64 max);
     void updateMainProgressBarValue(int val);
-    void modifySecondPBarVisibility(bool doShow);
-    void updateSecondProgressBarLimits(qint64 min,qint64 max);
+
+    void updateSecondProgressBarLimits(qint64 min, qint64 max);
     void updateSecondaryProgressBarValue(int val);
-    void setIconLabelSize(int size);
 
-    //Receivers
-    void displayMessage(int status,QString message);
-    void displayLogs(QString stdOut,QString stdErr);
-
-    //Core functionality
-    void handleFailed();
-    void handleFinished();
-
+    void modifySecondPBarVisibility(bool doShow);
 };
 
 #endif // KAIDAN_H
